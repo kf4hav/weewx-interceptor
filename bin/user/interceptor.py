@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # Copyright 2016-2020 Matthew Wall
 # Distributed under the terms of the GNU Public License (GPLv3)
-
+# 8-Mar-2025: modified by eduff0 to resolve GitHub Issues #117 and #90
 """
 This driver runs a simple web server or sniffs network traffic in order to
 capture data directly from an internet weather reporting device including:
@@ -335,7 +335,8 @@ def _obfuscate_passwords(msg):
 def _fmt_bytes(data):
     if not data:
         return ''
-    return ' '.join(['%02x' % ord(x) for x in data])
+    #return ' '.join(['%02x' % ord(x) for x in data])
+    return ' '.join(['%02x' % x for x in data]) #MYFIX for issue #117
 
 def _cgi_to_dict(s):
     if '=' in s:
@@ -519,27 +520,33 @@ class Consumer(object):
             # FIXME: generalize the packet type detection
             header_len = 0
             idx = 0
-            if len(data) >= 15 and data[12:14] == '\x08\x00':
+            logdbg(f"EH: data[12:14]: {data[12:14]}")
+            #if len(data) >= 15 and data[12:14] == '\x08\x00':
+            if len(data) >= 15 and data[12:14] == b'\x08\x00': #MYFIX for issue #117
                 # this is standard IP packet
-                header_len = ord(data[14]) & 0x0f
+                #header_len = ord(data[14]) & 0x0f
+                header_len = data[14] & 0x0f #MYFIX for issue #117
                 idx = 4 * header_len + 34
             elif (len(data) >= 70 and
                 data[12:14] == '\x81\x00' and data[16:18] == '\x08\x00'):
                 # this is 802.1Q tagged IP packet
                 header_len = ord(data[18]) & 0x0f
                 idx = 4 * header_len + 38
+            logdbg(f"EH: len(data): {len(data)} ")
+            logdbg(f"EH: idx: {idx}")
             if idx and len(data) >= idx:
                 _data = data[idx:]
-                if 'GET' in _data:
+                #if 'GET' in _data:
+                if b'GET' in _data: #MYFIX for issue #117
                     self.flush()
                     logdbg("sniff: start GET")
                     self.data_buffer = _data
-                elif 'POST' in _data:
+                elif b'POST' in _data:
                     self.flush()
                     logdbg("sniff: start POST")
                     self.data_buffer = 'POST?' # start buffer with dummy
                 elif len(self.data_buffer):
-                    if 'HTTP' in data:
+                    if b'HTTP' in data:
                         # looks like the end of a multi-packet GET
                         self.flush()
                     else:
@@ -559,7 +566,21 @@ class Consumer(object):
             logdbg("sniff: flush %s" % _fmt_bytes(self.data_buffer))
             if not self.data_buffer:
                 return
-            data = self.data_buffer
+            #data = self.data_buffer # Commented out for MYFIX to issue #117
+            # Start MYFIX for issue #117
+            if isinstance(self.data_buffer, bytes):
+                logdbg("Data buffer IS bytes")
+                try:
+                    decoded_data = self.data_buffer.decode('utf-8')
+                except UnicodeDecodeError:
+                    decoded_data = self.data_buffer.decode('utf-8', errors='replace')
+            else:
+                logdbg("Data buffer is NOT bytes")
+                decoded_data = self.data_buffer
+
+            logdbg("sniff: flush %s" % decoded_data)
+            data = decoded_data
+            # End MYFIX for issue #117
             # if this is a query string, parse it
             if '?' in data:
                 data = urlparse.urlparse(data).query
